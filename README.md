@@ -15,7 +15,7 @@ The proposed method leverages monocular depth estimation to reconstruct a watert
 
 The following diagram illustrates the complete end-to-end pipeline of CargoSight:
 
-<img src="assets/e2e-pipeline.png" width="80%">
+<img src="assets/e2e-pipeline.png" width="60%">
 
 ---
 
@@ -25,7 +25,7 @@ The following diagram illustrates the complete end-to-end pipeline of CargoSight
 CargoSight employs a monocular depth estimation model as a prior for 3D reconstruction.
 
 <div style="display: flex;">
-    <img src="assets/container-recon1.png" width="40%">
+    <img src="assets/container-recon1.png" width="60%">
     <img src="assets/container-recon2.png" width="40%">
 </div>
 
@@ -35,7 +35,7 @@ CargoSight employs a monocular depth estimation model as a prior for 3D reconstr
 The estimated depth undergoes normal correction to refine the 3D surface reconstruction.
 
 <div style="display: flex;">
-    <img src="assets/normal_correction1.png" width="40%">
+    <img src="assets/normal_correction1.png" width="41%">
     <img src="assets/pcd-downsampling.png" width="40%">
 </div>
 
@@ -44,7 +44,7 @@ The estimated depth undergoes normal correction to refine the 3D surface reconst
 ### **3. Volume Estimation Pipeline**
 A watertight 3D mesh of the container is generated to facilitate accurate volume estimation.
 
-<img src="assets/vol-est-pipeline1.png" width="80%">
+<img src="assets/vol-est-pipeline1.png" width="100%">
 
 *Steps involved in computing free volume inside a container.*
 
@@ -63,8 +63,8 @@ CargoSight demonstrates robust reconstruction capabilities across different carg
 The final output provides an estimation of the available space in cubic meters.
 
 <div style="display: flex;">
-    <img src="assets/estimated-vol.jpg" width="40%">
-    <img src="assets/pipeline3.png" width="40%">
+    <img src="assets/estimated-vol.jpg" width="30%">
+    <img src="assets/pipeline3.png" width="60%">
 </div>
 
 *Visualization of the final container volume computation.*
