@@ -76,11 +76,6 @@ cd cargosight
 pip install -r requirements.txt
 ```
 
-Run the pipeline on an example image:
-```sh
-python main.py --input example.jpg
-```
-
 ---
 
 ## License
