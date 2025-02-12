@@ -1,0 +1,329 @@
+import open3d as o3d
+import open3d.core as o3c
+import numpy as np
+from PIL import Image
+import os
+import cv2
+from matplotlib import pyplot as plt
+
+width = 1280
+height = 1024
+fx = 853.67375 
+cx = 622.40052
+fy = 854.15395
+cy = 507.49693
+CAMERA_INTRINSICS_O3D = o3d.core.Tensor([[fx, 0, cx],
+                                 [0, fy, cy],
+                                 [0, 0, 1]])
+
+CAMERA_INTRINSICS_NP = np.array([[fx, 0, cx],
+                                 [0, fy, cy],
+                                 [0, 0, 1]])
+CAMERA_INTRINSICS = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy)
+
+EXTRINSICS = np.array([
+        [0.09082,-0.995863,0.00278281,-0.187652],
+        [-0.0949438,-0.0114402,-0.995417,0.502423],
+        [0.991331,0.0901396,-0.0955901,-0.130249],
+        [0,0,0,1]])
+
+######### CAMERA RECTIFICATION PARAMS ##########
+DISTORTION_COEFFS = np.array([-0.248604, 0.094251, -0.000100, -0.000317, 0.000000])
+RECTIFICATION_MAT = np.eye(3)  # Identity since rectification will be done
+PROJECTION_MAT = np.array([[739.853, 0.000000, 617.655, 0.000000],
+                              [0.000000, 777.037, 506.513, 0.000000],
+                              [0.000000, 0.000000, 1.000000, 0.000000]])
+
+
+VIEW = 1
+SAVE = 0
+
+
+def project_pcd_depth(combined_ply, intrinsic, width, height):
+    points = np.asarray(combined_ply.points)
+    points[:, [0, 1, 2]] = points[:, [1, 2, 0]]
+    points = o3c.Tensor(np.asarray(points), dtype=o3c.Dtype.Float32)
+
+    if combined_ply.has_colors():
+        colors = o3c.Tensor(np.asarray(combined_ply.colors), dtype=o3c.Dtype.Float32)
+    else:
+        colors = None
+
+    if combined_ply.has_normals():
+        normals = o3c.Tensor(np.asarray(combined_ply.normals), dtype=o3c.Dtype.Float32)
+    else:
+        normals = None
+
+    t_pcd = o3d.t.geometry.PointCloud(o3c.Device("CPU:0"))   
+    t_pcd.point["positions"] = points
+
+    if colors is not None:
+        t_pcd.point["colors"] = colors
+    
+    if normals is not None:
+        t_pcd.point["normals"] = normals
+
+    # Perform this transformation to align the point cloud with the camera
+    rotate_180_z = np.array([
+        [-1, 0, 0, 0],
+        [0, -1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]])
+
+    t_pcd.transform(rotate_180_z)
+
+    combined_ply.paint_uniform_color([0, 1, 0])
+    
+    depth_reproj = t_pcd.project_to_depth_image(
+        width,
+        height,
+        intrinsic,
+        depth_scale=1.0,
+        depth_max=40.0
+    )
+    depth_reproj = np.asarray(depth_reproj)
+    
+    depth_map = Image.fromarray(depth_reproj[:, :, 0], 'F')
+    
+    print("Image mode: ", depth_map.mode)
+    print("Image size: ", depth_map.size)
+
+    return depth_map
+
+def project_to_3d(projected_depth, rgb_image, intrinsics, extrinsics):
+
+    depth_raw = o3d.geometry.Image(projected_depth)
+    rgb_raw = o3d.geometry.Image(rgb_image)
+    
+    
+    # Create RGBD image - Depending on how the Depth was scaled with reprojecting from LidAR need to adjust depth_scale
+    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb_raw, depth_raw, depth_scale=1.0, depth_trunc=10000.0, convert_rgb_to_intensity=False)
+
+    # Generate point cloud
+    pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, intrinsics)
+    
+    # Transform the point cloud using the extrinsic matrix
+    #pcd.transform(extrinsics)
+    return pcd
+
+def rectify_image(rgb_image, camera_matrix, dist_coeffs, rectification_matrix, projection_matrix, view=True):
+
+    h, w = rgb_image.shape[:2]
+    
+    # Compute the rectification transformation maps
+    map1, map2 = cv2.initUndistortRectifyMap(
+        camera_matrix, dist_coeffs, rectification_matrix, projection_matrix, (w, h), cv2.CV_32FC1
+    )
+    
+    # Apply the rectification to the image
+    rectified_image = cv2.remap(rgb_image, map1, map2, cv2.INTER_LINEAR)
+
+    # plot original and rectified images side by side
+    if view:
+        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+        ax[0].imshow(rgb_image)
+        ax[0].set_title('Original Image')
+        ax[1].imshow(rectified_image)
+        ax[1].set_title('Rectified Image')
+        plt.show()
+    
+
+    return rectified_image
+
+def nearest_neighbor_interpolation(depth_map, view=True):
+
+    if len(depth_map.shape) > 2:
+        print(f"Converting depth map from {depth_map.shape} to single-channel.")
+        depth_map = cv2.cvtColor(depth_map, cv2.COLOR_BGR2GRAY)
+
+    # Convert the depth map to 32-bit float if it's not already
+    if depth_map.dtype != np.float32:
+        print(f"Converting depth map from {depth_map.dtype} to 32-bit float.")
+        depth_map = depth_map.astype(np.float32)
+    
+    mask = depth_map == 0
+    mask = mask.astype(np.uint8)
+    dense_depth_map = cv2.inpaint(depth_map, mask.astype(np.uint8), 3, cv2.INPAINT_NS)
+
+    if view:
+        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+        ax[0].imshow(depth_map, cmap='inferno')
+        ax[0].set_title('Sparse Depth')
+        ax[1].imshow(dense_depth_map, cmap='inferno')
+        ax[1].set_title('Inpainted Depth')
+        plt.show()
+    return dense_depth_map
+
+def align_pointclouds(source_pcd, target_pcd, scale_factor=1.0, p2p=True):
+  
+    source_pcd.scale(scale_factor, center=(0, 0, 0))  # Scale around origin
+
+    rotate_180_z = np.array([
+        [-1, 0, 0, 0],
+        [0, -1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]])
+
+    source_pcd.transform(rotate_180_z)
+    
+    # Step 4: Get the centers of both point clouds
+    source_center = source_pcd.get_center()
+    target_center = target_pcd.get_center()
+
+    # Step 5: Compute the translation needed to align the centers
+    translation = target_center - source_center
+
+    # Step 6: Apply the translation to the source point cloud
+    source_pcd.translate(translation)
+    # Step 7: Apply ICP for fine alignment (optional, can refine after scaling and translation)
+    threshold = 0.0020  # Distance threshold for ICP
+    if p2p:
+        reg_p2p = o3d.pipelines.registration.registration_icp(
+            source_pcd, target_pcd, threshold,
+            np.eye(4),  # Initial guess (identity matrix)
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100)
+        )
+        
+
+    else:
+        # estimate normals
+        source_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+        target_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+        reg_p2p = o3d.pipelines.registration.registration_icp(
+            source_pcd, target_pcd, threshold,
+            np.eye(4),  # Initial guess (identity matrix)
+            o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50)
+        )
+    
+    # Apply the ICP transformation to further refine the alignment
+    aligned_source_pcd = source_pcd.transform(reg_p2p.transformation)
+
+    print(reg_p2p)
+    return aligned_source_pcd, reg_p2p.transformation
+
+def generate_depthmap_from_pointcloud(pointcloud, image_width, image_height, intrinsics_matrix):
+    """
+    Generates a 32-bit depth map from a projected colored point cloud.
+    
+    Parameters:
+    - pointcloud (open3d.geometry.PointCloud): The input point cloud.
+    - image_width (int): The width of the desired depth map.
+    - image_height (int): The height of the desired depth map.
+    - intrinsics_matrix (np.ndarray): 3x3 camera intrinsics matrix for projection.
+    
+    Returns:
+    - depth_map (np.ndarray): The resulting 32-bit depth map.
+    """
+
+    # Initialize depth map with infinite values (max depth initially)
+    depth_map = np.full((image_height, image_width), np.inf, dtype=np.float32)
+
+    # Get points and colors from point cloud
+    points = np.asarray(pointcloud.points)
+    colors = np.asarray(pointcloud.colors)  # in case you want to use color data
+
+    # Project 3D points to 2D image plane
+    for point in points:
+        # Decompose point coordinates
+        x, y, z = point
+
+        # Project 3D points to 2D using intrinsic matrix
+        if z > 0:  # Ignore points behind the camera
+            pixel = intrinsics_matrix @ np.array([x, y, z])
+            u, v = int(pixel[0] / pixel[2]), int(pixel[1] / pixel[2])
+
+            # Check if projected points are within image boundaries
+            if 0 <= u < image_width and 0 <= v < image_height:
+                # Update depth map with closer points
+                depth_map[v, u] = min(depth_map[v, u], z)
+    
+    # Convert infinite values to 0 for visualization
+    depth_map[depth_map == np.inf] = 0
+
+    return depth_map
+    
+
+if __name__ == "__main__":
+
+    container = 16
+    container_folder_name = f"/home/admin-anedunga/Desktop/livox_flir_raw_data/data/Container{container:02d}/livox_horizon/"
+    save_path = f"/home/admin-anedunga/Desktop/livox_flir_raw_data/data/Container{container:02d}/processed_data/"
+    content = os.listdir(container_folder_name)
+    plys = []
+    for file_name in content:
+        if file_name.endswith(".ply"):
+            pcd = o3d.io.read_point_cloud(os.path.join(container_folder_name, file_name))
+            plys.append(pcd)
+    
+    combined_ply = o3d.geometry.PointCloud()
+    for ply in plys:
+        combined_ply += ply
+
+    if VIEW:
+        o3d.visualization.draw_geometries([combined_ply], lookat = [0, 0, 0], up = [0, 0, 1], front = [-1, 0, 0], zoom = 0.25)
+
+    projected_depth = project_pcd_depth(combined_ply, CAMERA_INTRINSICS_O3D, width, height)
+    
+    cv_depth = np.array(projected_depth)
+    normalized_dm = cv2.normalize(cv_depth, None, 0, 255, cv2.NORM_MINMAX)
+    depth_map_view = cv2.applyColorMap(normalized_dm.astype(np.uint8), cv2.COLORMAP_INFERNO)
+
+    if VIEW:
+        cv2.imshow("Reprojected Depth Map", depth_map_view)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    if SAVE:
+        projected_depth.save(f"{save_path}projected_depth.tiff")
+        cv2.imwrite(f"{save_path}projected_depth_view.png", depth_map_view)
+        
+    # Load images
+    image_folder_name = f"/home/admin-anedunga/Desktop/livox_flir_raw_data/data/Container{container:02d}/flir_blackfly/"
+    content = os.listdir(image_folder_name)
+    rgb_image = cv2.imread(os.path.join(image_folder_name, content[0]), cv2.IMREAD_COLOR)
+    
+
+    rectified_rgb_image = rectify_image(rgb_image, CAMERA_INTRINSICS_NP, DISTORTION_COEFFS, RECTIFICATION_MAT, PROJECTION_MAT, view=VIEW)
+    # Adjust brightness and contrast of the rectified image (a-contrast, b-brightness)
+    enhanced_rgb_image = cv2.convertScaleAbs(rectified_rgb_image, alpha=1.5, beta=15)
+    if VIEW:
+        cv2.imshow("Enhanced RGB Image", enhanced_rgb_image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    if SAVE:
+        cv2.imwrite(f"{save_path}rectified_rgb.png", rectified_rgb_image)
+        cv2.imwrite(f"{save_path}enhanced_rgb.png", enhanced_rgb_image)
+    enhanced_rgb_image = cv2.cvtColor(enhanced_rgb_image, cv2.COLOR_BGR2RGB)
+
+    # Use either the enhanced_rgb_image or the rgb_image when projecting to pointcloud
+    reprojected_pcd = project_to_3d(cv_depth, enhanced_rgb_image, CAMERA_INTRINSICS, EXTRINSICS)
+
+ 
+    aligned_projected_pcd, transformation = align_pointclouds(reprojected_pcd, combined_ply)
+    print("Transformation Matrix", transformation)
+    if VIEW:
+        o3d.visualization.draw_geometries([aligned_projected_pcd, combined_ply], lookat = [0, 0, 0], up = [0, 0, 1], front = [-1, 0, 0], zoom = 0.75)
+
+    if SAVE:
+        # o3d.io.write_point_cloud(f"container{container:02d}_aligned_projected.pcd", aligned_projected_pcd)
+        # o3d.io.write_point_cloud(f"container{container:02d}_combined_lidar.pcd", combined_ply)
+        o3d.io.write_point_cloud(f"{save_path}projected_pointcloud.pcd", aligned_projected_pcd)
+        o3d.io.write_point_cloud(f"{save_path}lidar.pcd", combined_ply)
+
+    # Inpaint Depth Map
+    dense_depth_map = nearest_neighbor_interpolation(cv_depth, view=VIEW)
+    # project inpainted depth
+    # inpainted_pcd = project_to_3d(dense_depth_map, rgb_image, CAMERA_INTRINSICS, EXTRINSICS)
+    # o3d.visualization.draw_geometries([inpainted_pcd])
+
+    ## Create Square Depthmaps
+    # depthmap = generate_depthmap_from_pointcloud(aligned_projected_pcd, width, height, CAMERA_INTRINSICS_NP)
+    # cv_depth = np.array(depthmap)
+    # normalized_dm = cv2.normalize(cv_depth, None, 0, 255, cv2.NORM_MINMAX)
+    # depth_map_view2 = cv2.applyColorMap(normalized_dm.astype(np.uint8), cv2.COLORMAP_INFERNO)
+    # VIEW=1
+    # if VIEW:
+    #     cv2.imshow("Reprojected Depth Map", depth_map_view2)
+    #     cv2.waitKey(0)
+    #     cv2.destroyAllWindows()
