@@ -15,7 +15,7 @@ The proposed method leverages monocular depth estimation to reconstruct a watert
 
 The following diagram illustrates the complete end-to-end pipeline of CargoSight:
 
-<img src="assets/e2e-pipeline.png" width="60%">
+<img src="assets/e2e-pipeline.png" width="70%">
 
 ---
 
@@ -25,7 +25,7 @@ The following diagram illustrates the complete end-to-end pipeline of CargoSight
 CargoSight employs a monocular depth estimation model as a prior for 3D reconstruction.
 
 <div style="display: flex;">
-    <img src="assets/container-recon1.png" width="60%">
+    <img src="assets/container-recon1.png" width="50%">
     <img src="assets/container-recon2.png" width="40%">
 </div>
 
@@ -35,7 +35,7 @@ CargoSight employs a monocular depth estimation model as a prior for 3D reconstr
 The estimated depth undergoes normal correction to refine the 3D surface reconstruction.
 
 <div style="display: flex;">
-    <img src="assets/normal_correction1.png" width="41%">
+    <img src="assets/normal_correction1.png" width="40.5%">
     <img src="assets/pcd-downsampling.png" width="40%">
 </div>
 
