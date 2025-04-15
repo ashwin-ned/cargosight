@@ -2,7 +2,7 @@
 
 ## A Monocular Vision Architecture for Cargo Fill Estimation
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Custom-orange.svg)](LICENSE)
 
 ## Overview
 CargoSight is a novel computer vision pipeline designed for fast and accurate estimation of unutilized space in cargo containers using a single RGB image. This project was developed as part of the Master's thesis *"A Monocular Vision Architecture for Container Free Volume Estimation"*.
